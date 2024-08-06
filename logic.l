@@ -6,13 +6,15 @@
 
 void add_variable(char *name, int value);
 int get_variable(char *name);
-char* get_variable_name(int value);
+char* get_variable_source(char *name);
+char* get_or_create_intermediate_name();
 %}
 
 %option noyywrap
+%option yylineno
 
 %%
-[ \t\n]+                ;
+[ \t\n]+                ;  // 忽略空白符
 "&&"                    { return AND; }
 "||"                    { return OR; }
 "!"                     { return NOT; }

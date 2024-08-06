@@ -11,31 +11,30 @@ void yyerror(const char *s);
 
 typedef struct Operation {
     char *op;
-    int operand1;
-    int operand2;
-    int result;
     char *operand1_name;
     char *operand2_name;
+    int result;
+    int line;
     struct Operation *next;
 } Operation;
 
 typedef struct Variable {
     char *name;
     int value;
+    char *source;
     struct Variable *next;
 } Variable;
 
 Operation *head = NULL;
 Variable *var_head = NULL;
 
-void add_operation(const char *op, int operand1, int operand2, int result, const char *operand1_name, const char *operand2_name) {
+void add_operation(const char *op, const char *operand1_name, const char *operand2_name, int result, int line) {
     Operation *new_op = (Operation *)malloc(sizeof(Operation));
     new_op->op = strdup(op);
-    new_op->operand1 = operand1;
-    new_op->operand2 = operand2;
-    new_op->result = result;
     new_op->operand1_name = strdup(operand1_name);
     new_op->operand2_name = strdup(operand2_name);
+    new_op->result = result;
+    new_op->line = line;
     new_op->next = head;
     head = new_op;
 }
@@ -43,16 +42,17 @@ void add_operation(const char *op, int operand1, int operand2, int result, const
 void print_operations() {
     Operation *current = head;
     while (current != NULL) {
-        printf("Operation: %s, Operand1: %s (%d), Operand2: %s (%d), Result: %d\n",
-               current->op, current->operand1_name, current->operand1, current->operand2_name, current->operand2, current->result);
+        printf("Operation: %s, Operand1: %s, Operand2: %s, Result: %d, Line: %d\n",
+               current->op, current->operand1_name, current->operand2_name, current->result, current->line);
         current = current->next;
     }
 }
 
-void add_variable(char *name, int value) {
+void add_variable(char *name, int value, const char *source) {
     Variable *var = (Variable *)malloc(sizeof(Variable));
     var->name = strdup(name);
     var->value = value;
+    var->source = strdup(source);
     var->next = var_head;
     var_head = var;
 }
@@ -69,28 +69,46 @@ int get_variable(char *name) {
     return 0;
 }
 
-char* get_variable_name(int value) {
+char* get_variable_source(char *name) {
     Variable *current = var_head;
     while (current != NULL) {
-        if (current->value == value) {
-            return current->name;
+        if (strcmp(current->name, name) == 0) {
+            return current->source;
         }
         current = current->next;
     }
-    return NULL;
+    return "undefined";
 }
+
+char* get_or_create_intermediate_name() {
+    static int counter = 0;
+    char *name = (char *)malloc(20 * sizeof(char));
+    sprintf(name, "intermediate_%d", counter++);
+    return name;
+}
+
+void yyerror(const char *s) {
+    fprintf(stderr, "Error: %s\n", s);
+}
+
 %}
 
 %union {
     int boolean;
     char *text;
+    struct {
+        int value;
+        char *name;
+    } expr_info;
 }
 
 %token <boolean> BOOL
 %token <text> IDENTIFIER
 %token AND OR NOT LPAREN RPAREN
 
-%type <boolean> expr term factor
+%type <expr_info> expr term factor
+
+%locations
 
 %%
 input:
@@ -104,59 +122,63 @@ statements:
 
 statement:
     IDENTIFIER '=' expr ';' {
-        add_variable($1, $3);
-        printf("Assigned %s = %d\n", $1, $3);
+        add_variable($1, $3.value, "defined");
+        printf("Assigned %s = %d\n", $1, $3.value);
     }
-    | expr ';' { 
-        //char *name1 = get_variable_name($1);
-        //char *name2 = get_variable_name($3);
-        printf("Final result: %d\n", $1); 
-    }
+    | expr ';' { printf("Final result: %d\n", $1.value); }
 ;
 
 expr:
     expr OR term {
-        char *name1 = get_variable_name($1);
-        char *name2 = get_variable_name($3);
-        printf("Performing OR: %s (%d) || %s (%d)\n", name1 ? name1 : "temp", $1, name2 ? name2 : "temp", $3);
-        $$ = $1 || $3;
-        add_operation("OR", $1, $3, $$, name1 ? name1 : "temp", name2 ? name2 : "temp");
-        printf("Result after OR: %d\n", $$);
+        char *name1 = $1.name ? $1.name : get_or_create_intermediate_name();
+        char *name2 = $3.name ? $3.name : get_or_create_intermediate_name();
+        printf("Performing OR: %s (%d, %s) || %s (%d, %s) at line %d\n",
+               name1, $1.value, get_variable_source(name1), name2, $3.value, get_variable_source(name2), @$.first_line);
+        $$.value = $1.value || $3.value;
+        add_operation("OR", name1, name2, $$.value, @$.first_line);
+        printf("Result after OR: %d\n", $$.value);
+        $$.name = get_or_create_intermediate_name();
     }
-    | term
+    | term {
+        $$.value = $1.value;
+        $$.name = $1.name;
+    }
 ;
 
 term:
     term AND factor {
-        char *name1 = get_variable_name($1);
-        char *name2 = get_variable_name($3);
-        printf("Performing AND: %s (%d) && %s (%d)\n", name1 ? name1 : "temp", $1, name2 ? name2 : "temp", $3);
-        $$ = $1 && $3;
-        add_operation("AND", $1, $3, $$, name1 ? name1 : "temp", name2 ? name2 : "temp");
-        printf("Result after AND: %d\n", $$);
+        char *name1 = $1.name ? $1.name : get_or_create_intermediate_name();
+        char *name2 = $3.name ? $3.name : get_or_create_intermediate_name();
+        printf("Performing AND: %s (%d, %s) && %s (%d, %s) at line %d\n",
+               name1, $1.value, get_variable_source(name1), name2, $3.value, get_variable_source(name2), @$.first_line);
+        $$.value = $1.value && $3.value;
+        add_operation("AND", name1, name2, $$.value, @$.first_line);
+        printf("Result after AND: %d\n", $$.value);
+        $$.name = get_or_create_intermediate_name();
     }
-    | factor
+    | factor {
+        $$.value = $1.value;
+        $$.name = $1.name;
+    }
 ;
 
 factor:
     NOT factor {
-        printf("Performing NOT: !%d\n", $2);
-        $$ = !$2;
-        printf("Result after NOT: %d\n", $$);
+        printf("Performing NOT: !%d\n", $2.value);
+        $$.value = !$2.value;
+        printf("Result after NOT: %d\n", $$.value);
+        $$.name = get_or_create_intermediate_name();
     }
     | BOOL {
-        $$ = $1;
+        $$.value = $1;
+        $$.name = NULL;
     }
     | IDENTIFIER {
-        $$ = get_variable($1);
+        $$.value = get_variable($1);
+        $$.name = $1;
     }
     | LPAREN expr RPAREN {
-        $$ = $2;
+        $$.value = $2.value;
+        $$.name = $2.name;
     }
 ;
-
-%%
-void yyerror(const char *s) {
-    fprintf(stderr, "Error: %s\n", s);
-}
-
