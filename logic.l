@@ -14,7 +14,7 @@ char* get_or_create_intermediate_name();
 %option yylineno
 
 %%
-[ \t\n]+                ;  // 忽略空白符
+[ \t\n]+                ;
 "&&"                    { return AND; }
 "||"                    { return OR; }
 "!"                     { return NOT; }
